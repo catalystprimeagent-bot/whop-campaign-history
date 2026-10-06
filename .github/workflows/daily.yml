@@ -1,0 +1,34 @@
+name: Daily snapshot
+
+# Public repo, so these Actions minutes are free and do not touch CATALYST's private-repo budget.
+on:
+  schedule:
+    # 09:00 UTC daily. Deliberately independent of CATALYST's night shift, so the series keeps
+    # collecting on nights the night shift is skipped or out of minutes.
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Take today's snapshot
+        run: python3 collect.py
+
+      - name: Commit it
+        run: |
+          git config user.name "catalystprimeagent-bot"
+          git config user.email "catalystprimeagent@users.noreply.github.com"
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "Nothing changed (already captured today). Not committing."
+            exit 0
+          fi
+          git add data latest.json history.csv
+          git commit -m "Snapshot $(date -u +%Y-%m-%d)"
+          git push
