@@ -19,16 +19,31 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Take today's snapshot
-        run: python3 collect.py
+        id: snapshot
+        # Deliberately does not fail the step. If the fetch dies, collect.py has already
+        # rewritten coverage.csv marking today MISSING, and that record is worth committing —
+        # a hole nobody can back-fill must reach the repo on the day it happens. The job is
+        # still failed below, so the run shows red and the drop is visible.
+        run: |
+          set +e
+          python3 collect.py
+          echo "exit=$?" >> "$GITHUB_OUTPUT"
 
       - name: Commit it
+        if: always()
         run: |
           git config user.name "catalystprimeagent-bot"
           git config user.email "catalystprimeagent@users.noreply.github.com"
-          if git diff --quiet && git diff --cached --quiet; then
+          git add -A data latest.json history.csv coverage.csv
+          if git diff --cached --quiet; then
             echo "Nothing changed (already captured today). Not committing."
             exit 0
           fi
-          git add data latest.json history.csv
           git commit -m "Snapshot $(date -u +%Y-%m-%d)"
           git push
+
+      - name: Fail the run if the snapshot failed
+        if: always() && steps.snapshot.outputs.exit != '0'
+        run: |
+          echo "collect.py exited ${{ steps.snapshot.outputs.exit }} — today is recorded MISSING."
+          exit 1

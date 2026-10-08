@@ -11,6 +11,14 @@ Writes:
   data/YYYY-MM-DD.json  full snapshot for that day (one file per day, never overwritten)
   history.csv           one row per campaign per day, appended
   latest.json           the most recent snapshot, for convenience
+  coverage.csv          one row per calendar day since the series began, saying whether that
+                        day was captured or is MISSING
+
+Why coverage.csv exists: the value of this series is that a snapshot cannot be back-filled by
+anyone, including us. GitHub drops scheduled workflow runs under load, so days *will* go
+missing. A series with undocumented holes is worse than a shorter honest one, so every hole is
+recorded explicitly and never filled in later. coverage.csv is derived from the files in data/
+on every run, so it is self-healing and cannot drift from the actual snapshots.
 """
 
 import csv
@@ -39,6 +47,60 @@ FIELDS = [
 ]
 
 CSV_COLUMNS = ["date"] + FIELDS
+
+COVERAGE_COLUMNS = ["date", "status", "campaignCount", "note"]
+MISSING_NOTE = ("no snapshot exists for this date and one cannot be created after the fact; "
+                "the directory only ever serves its current state")
+
+
+def captured_days():
+    """Every date we actually hold a snapshot for, read from data/ rather than from any index."""
+    days = {}
+    for p in sorted((ROOT / "data").glob("*.json")):
+        try:
+            snap = json.loads(p.read_text(encoding="utf-8"))
+        except (ValueError, OSError):
+            continue
+        day = snap.get("date") or p.stem
+        days[day] = snap.get("campaignCount")
+    return days
+
+
+def write_coverage(today):
+    """Rewrite coverage.csv from the snapshots on disk, marking every absent date MISSING.
+
+    Derived, not appended, so a hole recorded by one run stays recorded and a run that
+    somehow captured a day late cannot leave a stale MISSING row behind.
+    """
+    days = captured_days()
+    if not days:
+        return 0
+    first = datetime.date.fromisoformat(min(days))
+    last = max(datetime.date.fromisoformat(max(days)),
+               datetime.date.fromisoformat(today))
+
+    rows, missing = [], 0
+    day = first
+    while day <= last:
+        iso = day.isoformat()
+        if iso in days:
+            rows.append({"date": iso, "status": "captured",
+                         "campaignCount": days[iso], "note": ""})
+        else:
+            rows.append({"date": iso, "status": "MISSING",
+                         "campaignCount": "", "note": MISSING_NOTE})
+            missing += 1
+        day += datetime.timedelta(days=1)
+
+    with (ROOT / "coverage.csv").open("w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=COVERAGE_COLUMNS)
+        w.writeheader()
+        w.writerows(rows)
+
+    span = len(rows)
+    print(f"coverage: {span - missing} of {span} days captured "
+          f"({first.isoformat()} to {last.isoformat()}), {missing} missing")
+    return missing
 
 
 def fetch(url=URL):
@@ -93,6 +155,12 @@ def slim(c):
 
 def main():
     day = os.environ.get("SNAPSHOT_DATE") or datetime.date.today().isoformat()
+
+    # Record holes first, before anything that can fail. If tonight's fetch dies, the workflow
+    # still commits this, so the gap is on the record the same day rather than never.
+    (ROOT / "data").mkdir(exist_ok=True)
+    write_coverage(day)
+
     html = fetch()
     campaigns = [slim(c) for c in extract(html)]
 
@@ -111,7 +179,6 @@ def main():
         "campaigns": campaigns,
     }
 
-    (ROOT / "data").mkdir(exist_ok=True)
     out = ROOT / "data" / f"{day}.json"
     if out.exists():
         print(f"{day} already captured ({out}); not overwriting.")
@@ -130,6 +197,8 @@ def main():
             row = dict(c, date=day)
             row["platforms"] = "|".join(c["platforms"] or [])
             w.writerow(row)
+
+    write_coverage(day)
 
     print(f"{day}: {len(campaigns)} campaigns, "
           f"${total:,.0f} budget posted, ${spent:,.0f} paid out so far")

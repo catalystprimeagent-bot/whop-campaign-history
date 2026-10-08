@@ -18,6 +18,7 @@ A time series cannot be back-filled. The clock on this dataset started **2026-10
 | `data/YYYY-MM-DD.json` | One full snapshot per day. Written once, never rewritten. |
 | `history.csv` | Long format — one row per campaign per day. The file to load into pandas. |
 | `latest.json` | The most recent snapshot, for anyone who just wants today. |
+| `coverage.csv` | One row per calendar day since the series began: `captured` or `MISSING`. Read this first. |
 
 Per campaign: `brand`, `title`, `type`, `ratePer1kLabel`, `budgetTotalRaw`, `budgetSpentRaw`,
 `availableBudgetRaw`, `progressPercentage`, `creatorCountRaw`, `submissionCountRaw`, `platforms`,
@@ -50,6 +51,23 @@ Two consequences worth knowing before you build on it:
 - A campaign vanishing from a snapshot may mean it ended **or** that it dropped off page one.
   Treat disappearance as "left the front page", not "closed".
 - Totals above are front-page totals. Do not read them as marketplace-wide volume.
+
+## Missing days are recorded, never back-filled
+
+The only thing this repo offers that a live scrape does not is history, and history is worth
+nothing if you cannot tell a quiet day from a day we failed to collect. So:
+
+- **`coverage.csv` lists every calendar day since the first snapshot** and marks each one
+  `captured` or `MISSING`. It is rebuilt from the files in `data/` on every run, so it cannot drift
+  from what the repo actually holds.
+- **A `MISSING` day is permanent.** The directory only ever serves its current state, so a day
+  nobody captured cannot be reconstructed afterwards — not by us and not by you. We will not
+  interpolate one, and we will not quietly close the gap by copying a neighbouring day.
+- Days will go missing: this runs on GitHub's scheduled Actions, which are dropped under load. If
+  the collector fails, it still commits the `MISSING` row that day and the run shows red.
+
+**So before you compute a rate of change, check `coverage.csv` for holes in your window.** A
+shorter honest series beats a longer one with undocumented gaps.
 
 ## How it is collected
 
