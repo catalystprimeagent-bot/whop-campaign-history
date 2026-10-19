@@ -12,3 +12,4 @@ date,status,campaignCount,note
 2026-10-16,captured,52,
 2026-10-17,captured,55,
 2026-10-18,MISSING,,no snapshot exists for this date and one cannot be created after the fact; the directory only ever serves its current state
+2026-10-19,captured,55,
